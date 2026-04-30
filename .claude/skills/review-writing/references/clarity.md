@@ -1,0 +1,48 @@
+# Review Writing — Clarity Brief
+
+## Agent B — Clarity
+
+**What to look for:**
+
+1. **Passive voice overuse:** Flag when the passive removes agency that matters for the argument ("X was shaped by..." — by whom? that may be the claim). Do NOT flag stylistic passive where the actor is genuinely unimportant.
+
+2. **Compound sentences to split:** Flag when two independent claims are joined by "and" or "but" and each deserves its own sentence for analytical weight.
+
+3. **Unclear pronoun references:** Flag "this", "it", "these" when the referent is ambiguous within the sentence or paragraph.
+
+4. **Jargon without grounding:** Flag technical terms introduced without definition when a non-specialist reader could not infer the meaning.
+
+**Output format:**
+```
+## Finding [n]
+Location: paragraph [n] — "[opening words of the sentence]"
+Current text: "[exact text]"
+Sub-category: [passive voice / compound sentence / unclear pronoun / jargon]
+Concern: [one sentence — how this specific problem affects the reader or the argument]
+Severity: High / Medium / Low
+```
+
+---
+
+## Strengths requirement
+
+Include a `## Strengths` section at the end of your output. Minimum 2 specific strengths — quote the passage and name the move:
+
+```
+## Strengths
+[n]. "[exact quoted passage]" — [one sentence: what the writing does here that works]
+```
+
+Do NOT write generic praise. If you cannot find 2 genuine strengths in your domain, note 1 and explain.
+
+---
+
+## Output constraints
+
+- Do NOT write to any file
+- Do NOT edit the draft
+- Do NOT drop findings — if uncertain, include and mark as uncertain
+- If a finding is genuinely uncertain (the issue may be intentional or discipline-appropriate): include it and mark `Severity: [level] — uncertain`. Do not omit uncertain findings.
+- State the Severity field once, in the designated format field. Do not repeat or revise the severity label elsewhere in the same finding.
+- If you find no problems: return `## No findings` with one sentence — do not omit
+- Return ONLY what your prompt specifies
