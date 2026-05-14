@@ -1,5 +1,42 @@
 # CHANGELOG
 
+## 2026-05-14 — Phase 8: Config-driven hooks + bootstrapper
+
+### Architectural shift: hardcoded → config-driven
+
+All seven lifecycle hooks now read their per-project configuration from `.claude/claude-hooks-config.json` instead of carrying hardcoded values inside the hook scripts. A new SessionStart bootstrapper hook detects projects without config and directs the user to a guided setup flow.
+
+**Files changed:**
+
+- `.claude/hooks/protect-files.sh` — replaces basename-array-in-script with `protect.substrings` + `protect.basenames` from config. Adds substring matching (was basename-only).
+- `.claude/hooks/verify-reminder.py` — replaces extension-keyed dict with path-glob `verify.rules`. Adds `verify.skipDirs` + `verify.skipExtensions` config.
+- `.claude/hooks/log-reminder.py` — replaces hardcoded session-log path with `sessionLog.glob`. No-ops silently when config absent.
+- `.claude/hooks/pre-compact.py` — replaces hardcoded `quality_reports/` scan with `phaseState.scanDir` for phase-status capture. Decision-extraction regex broadened to cover more conventions (`**Decision:**`, `FIXED`, `[NEW`, `dismissed`, `applied:`, `queued`, `Fixed via`, `needs decision`, `split`, `UNVERIFIED`).
+- `.claude/hooks/post-compact-restore.py` — surfaces phase state from pre-compact-state.json when present. Adds skill-run-incomplete detection (no-op if log format doesn't match).
+- `.claude/hooks/detect-config.py` — **NEW.** SessionStart bootstrapper. Matcher `startup|resume`. Prints a setup directive when `.claude/claude-hooks-config.json` is absent and no `.claude/no-claude-hooks` sentinel exists. Idempotent: silently no-ops once either the config or the sentinel exists.
+- `.claude/hooks/notify.sh` and `.claude/hooks/context-monitor.py` — unchanged (no per-project config needed).
+
+**New files:**
+
+- `.claude/skills/configure-hooks/SKILL.md` — guided setup/update skill, available globally as `/configure-hooks`. Reads existing config, asks via AskUserQuestion for changes, writes config atomically.
+- `.claude/claude-hooks-config.json.example` — generic template demonstrating all four sections with econ/lecture-domain example values. Copy to `claude-hooks-config.json` and edit, or run `/configure-hooks`.
+
+**Settings:**
+
+- `.claude/settings.json` — added second SessionStart binding with matcher `startup|resume` for `detect-config.py`. Existing `compact|resume` binding for `post-compact-restore.py` retained.
+
+**Fail-open invariants preserved.** Every hook returns exit 0 on bug; malformed config logs a stderr warning and no-ops; missing config means hooks silently inactive.
+
+**Opt-out path.** Users who don't want hooks for a given project can `touch .claude/no-claude-hooks`; the bootstrapper silently skips. Remove the file to re-enable prompts.
+
+**Migration for existing forks:**
+
+1. Pull these changes.
+2. Run `/configure-hooks` to write your project's config — or copy `.example` to `claude-hooks-config.json` and edit by hand.
+3. (Optional) Remove any `.claude/state/personal-memory.md` entries about hardcoded hook values — they're now in committed config.
+
+---
+
 ## 2026-05-01 — Phase 7: Skill-creator framework compliance + 23-lesson convergence loop
 
 ### Writing analysis skills — all four converged

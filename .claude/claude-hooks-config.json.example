@@ -1,0 +1,59 @@
+{
+  "_comment": "Example claude-hooks-config.json — copy to claude-hooks-config.json and edit, or run /configure-hooks for a guided setup. Each top-level section is optional; absence means the corresponding hook no-ops silently.",
+
+  "sessionLog": {
+    "_comment": "Stop hook reminds to update a session log every 15 responses without an mtime change.",
+    "glob": "quality_reports/session_logs/*.md"
+  },
+
+  "protect": {
+    "_comment": "PreToolUse(Edit|Write) blocks edits matching any pattern. Substrings: anywhere in the path (use for whole dirs and canonical-path files). Basenames: filename match anywhere in tree.",
+    "substrings": [
+      "/secrets/",
+      "data/raw/"
+    ],
+    "basenames": [
+      "Bibliography_base.bib",
+      ".env"
+    ]
+  },
+
+  "verify": {
+    "_comment": "PostToolUse(Write|Edit) prints a reminder after writes matching a rule glob. skipDirs/skipExtensions short-circuit BEFORE rules are checked.",
+    "rules": [
+      {
+        "glob": "Slides/*.tex",
+        "action": "compile with /compile-latex before marking task complete"
+      },
+      {
+        "glob": "Quarto/*.qmd",
+        "action": "render with quarto render and verify HTML output exists"
+      },
+      {
+        "glob": "scripts/*.R",
+        "action": "run via Rscript and confirm output file exists with non-zero size"
+      }
+    ],
+    "skipDirs": [
+      "/docs/",
+      "/templates/",
+      "/quality_reports/",
+      "/.claude/",
+      "/node_modules/",
+      "/build/",
+      "/dist/"
+    ],
+    "skipExtensions": [
+      ".md", ".txt", ".rst",
+      ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg",
+      ".lock", ".gitignore",
+      ".svg", ".png", ".jpg", ".pdf",
+      ".bib", ".cls", ".sty"
+    ]
+  },
+
+  "phaseState": {
+    "_comment": "PreCompact hook scans this directory for files containing `phase-status::` markers. Captured for context restoration after compaction. Used by long-running multi-phase workflows.",
+    "scanDir": "quality_reports/"
+  }
+}

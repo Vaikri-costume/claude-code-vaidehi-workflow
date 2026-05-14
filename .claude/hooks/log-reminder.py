@@ -1,31 +1,50 @@
 #!/usr/bin/env python3
 """
-Session Log Reminder Hook for Claude Code
+Session Log Reminder Hook (global, config-driven)
 
-A Stop hook that tracks how many responses have passed since the session
-log was last updated. After a threshold, it blocks Claude from stopping
-and reminds it to update the session log.
+Stop hook that prompts the user to maintain a session log. Opt-in per-project
+via `.claude/claude-hooks-config.json` field `sessionLog.glob` — a glob pattern
+relative to project root identifying session-log files.
 
-Adapted from: https://gist.github.com/michaelewens/9a1bc5a97f3f9bbb79453e5b682df462
+Behaviour:
+  - No config file → exit 0 silently (no-op).
+  - Config present but no `sessionLog.glob` → exit 0 silently.
+  - Glob set, no matching file → block once asking the user to create one.
+  - Glob set, file exists, mtime unchanged for THRESHOLD responses → block once.
+  - Glob set, file updated → reset counter.
 
-Usage (in .claude/settings.json):
-    "Stop": [{ "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/log-reminder.py" }] }]
+`stop_hook_active` short-circuit prevents infinite loops.
+
+Example CCVW config:
+    "sessionLog": { "glob": "memory/staging/session-log-*.md" }
 """
 
 from __future__ import annotations
 
-import json
-import sys
 import hashlib
-from pathlib import Path
+import json
+import os
+import sys
 from datetime import datetime
+from pathlib import Path
 
 THRESHOLD = 15
+CONFIG_PATH = ".claude/claude-hooks-config.json"
+
+
+def read_config(project_dir: Path) -> dict:
+    """Read project hooks config; return {} on absent or malformed."""
+    cfg = project_dir / CONFIG_PATH
+    if not cfg.is_file():
+        return {}
+    try:
+        return json.loads(cfg.read_text())
+    except (json.JSONDecodeError, IOError) as e:
+        print(f"log-reminder: ignoring malformed config: {e}", file=sys.stderr)
+        return {}
 
 
 def get_state_dir() -> Path:
-    """Get state directory under ~/.claude/sessions/ keyed by project."""
-    import os
     project_dir = os.environ.get("CLAUDE_PROJECT_DIR", "")
     if not project_dir:
         state_dir = Path.home() / ".claude" / "sessions" / "default"
@@ -36,66 +55,59 @@ def get_state_dir() -> Path:
     return state_dir
 
 
-def get_project_dir():
-    """Get project directory from stdin JSON or environment."""
+def find_latest_log(project_dir: Path, pattern: str) -> tuple[Path | None, float]:
     try:
-        hook_input = json.load(sys.stdin)
-    except (json.JSONDecodeError, EOFError):
-        hook_input = {}
-
-    # If stop_hook_active, Claude is already continuing from a previous
-    # Stop hook block — let it stop this time to avoid infinite loops.
-    if hook_input.get("stop_hook_active", False):
-        sys.exit(0)
-
-    return hook_input.get("cwd", ""), hook_input
+        matches = [p for p in project_dir.glob(pattern) if p.is_file()]
+    except (ValueError, OSError):
+        return None, 0.0
+    if not matches:
+        return None, 0.0
+    latest = max(matches, key=lambda f: f.stat().st_mtime)
+    return latest, latest.stat().st_mtime
 
 
 def get_state_path() -> Path:
-    """Return the state file path for the current project."""
     return get_state_dir() / "log-reminder-state.json"
 
 
 def load_state(state_path: Path) -> dict:
-    """Load persisted state, or return defaults."""
     try:
         return json.loads(state_path.read_text())
     except (FileNotFoundError, json.JSONDecodeError):
         return {"counter": 0, "last_mtime": 0.0, "reminded": False, "no_log_reminded": False}
 
 
-def save_state(state_path: Path, state: dict):
-    """Persist state to disk."""
+def save_state(state_path: Path, state: dict) -> None:
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps(state))
 
 
-def find_latest_log(project_dir: str) -> tuple[Path | None, float]:
-    """Find the most recently modified .md file in session_logs/."""
-    log_dir = Path(project_dir) / "quality_reports" / "session_logs"
-    if not log_dir.is_dir():
-        return None, 0.0
+def main() -> None:
+    try:
+        hook_input = json.load(sys.stdin)
+    except (json.JSONDecodeError, EOFError):
+        hook_input = {}
 
-    md_files = list(log_dir.glob("*.md"))
-    if not md_files:
-        return None, 0.0
+    if hook_input.get("stop_hook_active", False):
+        sys.exit(0)
 
-    latest = max(md_files, key=lambda f: f.stat().st_mtime)
-    return latest, latest.stat().st_mtime
+    project_dir_str = hook_input.get("cwd", "") or os.environ.get("CLAUDE_PROJECT_DIR", "")
+    if not project_dir_str:
+        sys.exit(0)
+    project_dir = Path(project_dir_str)
 
-
-def main():
-    project_dir, hook_input = get_project_dir()
-    if not project_dir:
+    config = read_config(project_dir)
+    glob_pattern = (config.get("sessionLog") or {}).get("glob")
+    if not glob_pattern:
         sys.exit(0)
 
     state_path = get_state_path()
     state = load_state(state_path)
 
-    latest_log, current_mtime = find_latest_log(project_dir)
+    latest_log, current_mtime = find_latest_log(project_dir, glob_pattern)
     today = datetime.now().strftime("%Y-%m-%d")
 
-    # Case 1: No session log exists at all — remind once, then let Claude work
+    # Case 1: glob set but no matching file — remind once.
     if latest_log is None:
         if not state.get("no_log_reminded", False):
             state["no_log_reminded"] = True
@@ -103,22 +115,26 @@ def main():
             output = {
                 "decision": "block",
                 "reason": (
-                    f"No session log exists yet. Create one at "
-                    f"quality_reports/session_logs/{today}_description.md "
-                    f"before continuing. Include the current goal and key context."
+                    f"No session log found matching `{glob_pattern}`. "
+                    f"Create one (e.g. substitute YYYY-MM-DD with {today}) before continuing. "
+                    f"To change the glob or disable this prompt, run /configure-hooks."
                 ),
             }
             json.dump(output, sys.stdout)
-        # Already reminded — let Claude proceed (it will create the log)
         sys.exit(0)
 
-    # Case 2: Log was updated since last check — reset everything
+    # Case 2: log updated — reset.
     if current_mtime != state["last_mtime"]:
-        state = {"counter": 0, "last_mtime": current_mtime, "reminded": False, "no_log_reminded": False}
+        state = {
+            "counter": 0,
+            "last_mtime": current_mtime,
+            "reminded": False,
+            "no_log_reminded": False,
+        }
         save_state(state_path, state)
         sys.exit(0)
 
-    # Case 3: Log not updated — increment counter
+    # Case 3: log not updated — increment.
     state["counter"] += 1
 
     if state["counter"] >= THRESHOLD and not state["reminded"]:
@@ -143,5 +159,4 @@ if __name__ == "__main__":
     try:
         main()
     except Exception:
-        # Fail open — never block Claude due to a hook bug
         sys.exit(0)
